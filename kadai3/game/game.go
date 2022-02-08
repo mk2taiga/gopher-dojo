@@ -10,9 +10,7 @@ import (
 	"time"
 )
 
-type Game struct {
-	OutStream, ErrStream io.Writer
-}
+type Game struct{}
 
 const ErrorOccurred = 1
 
