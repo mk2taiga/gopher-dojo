@@ -68,7 +68,7 @@ func ConvertEtx(src, from, to string) (int, error) {
 		fileCnt++
 	}
 
-	return 0, nil
+	return fileCnt, nil
 }
 
 func filename(path string) string {
@@ -76,7 +76,7 @@ func filename(path string) string {
 }
 
 func walkDir(dir, ext string, fileNames chan<- string) {
-	ue := strings.ToLower(ext)
+	ue := strings.ToUpper(ext)
 	for _, ent := range dirents(dir) {
 		if !strings.HasSuffix(ent.Name(), ext) && !strings.HasSuffix(ent.Name(), ue) && !ent.IsDir() {
 			continue
