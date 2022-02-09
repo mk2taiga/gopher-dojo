@@ -2,7 +2,9 @@ package rangedownloader
 
 import (
 	"fmt"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -39,7 +41,39 @@ func (d *Downloader) Run() int {
 		return 1
 	}
 
+	if err := d.parseCommandLine(); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+
+	l, err := d.getContentLength()
+	if err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	subFileLen := l / d.procs
+	remaining := l % d.procs
+
 	return 0
+}
+
+func (d *Downloader) getContentLength() (int, error) {
+	res, err := http.Head(d.url)
+	if err != nil {
+		return 0, errors.Wrapf(err, "failed to access the site you provided: %s", d.url)
+	}
+
+	if res.Header.Get("Accept-Ranges") != "bytes" {
+		return 0, errors.New("this site doesn't support a range request")
+	}
+
+	l, err := strconv.Atoi(res.Header.Get("Content-Length"))
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to get Content-Length")
+	}
+	fmt.Printf("total length: %d bytes\n", l)
+
+	return l, nil
 }
 
 func (d *Downloader) parseCommandLine() error {
