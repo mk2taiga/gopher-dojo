@@ -1,15 +1,19 @@
 package rangedownloader
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/jessevdk/go-flags"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 const tempDir = "dlTmp"
@@ -54,7 +58,101 @@ func (d *Downloader) Run() int {
 	subFileLen := l / d.procs
 	remaining := l % d.procs
 
+	eg, ctx := errgroup.WithContext(context.Background())
+	for i := 0; i < d.procs; i++ {
+		// goroutine に i を渡すので、再度インスタンスを生成している。
+		i := i
+
+		from := subFileLen * i
+		to := subFileLen * (i + 1)
+
+		// 最後のループの時だけ、余る分も追加で読み込んでやる。
+		if i == d.procs-1 {
+			to += remaining
+		}
+
+		// goroutine を用いて範囲リクエストを行う。
+		eg.Go(func() error {
+			return d.rangeRequest(ctx, from, to, i)
+		})
+	}
+
+	// error group が終わるまで待つ。
+	if err := eg.Wait(); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+
+	// 全ての goroutine が終わったら、ファイルを結合する。
+	if err := d.createFile(); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+
+	// 一時ディレクトリを削除する。
+	if err := os.RemoveAll(tempDir); err != nil {
+		fmt.Println(err)
+		return 1
+	}
+
 	return 0
+}
+
+func (d *Downloader) createFile() error {
+	// コンソールで指定されて名前でファイルを作成する。
+	file, err := os.Create(d.name)
+	if err != nil {
+		return errors.Wrap(err, "failed to create output file")
+	}
+	defer file.Close()
+
+	// 一時ディレクトリ内のファイルを全て読み込んで、一つのファイルに結合する。
+	for i := 0; i < d.procs; i++ {
+		subFile, err := os.Open(path.Join(tempDir, fmt.Sprint(i)))
+		if err != nil {
+			return errors.Wrap(err, "failed to generate output file")
+		}
+		io.Copy(file, subFile)
+		subFile.Close()
+	}
+
+	return nil
+}
+
+func (d *Downloader) rangeRequest(ctx context.Context, from int, to int, i int) error {
+	client := http.Client{}
+
+	// リクエストを生成
+	req, err := http.NewRequest("GET", d.url, nil)
+	if err != nil {
+		return errors.Wrapf(err, "failed to access the site you provided: %s", d.url)
+	}
+
+	// リクエストヘッダに Range を設定
+	rangeHeader := fmt.Sprintf("bytes=%d-%d", from, to-1)
+	req.Header.Add("Range", rangeHeader)
+	// errgroup.WithContext wraps context by calling context.WithCancel
+	// cf. https://github.com/golang/sync/blob/master/errgroup/errgroup.go#L34
+	req = req.WithContext(ctx)
+	// リクエスト実行
+	resp, err := client.Do(req)
+	if err != nil {
+		return errors.Wrap(err, "failed to get response. please try again later ")
+	}
+	fmt.Printf("Range: %v, %v bytes\n", rangeHeader, resp.ContentLength)
+	defer resp.Body.Close()
+
+	// ファイルが存在しなかった場合に生成
+	file, err := os.OpenFile(path.Join(tempDir, fmt.Sprint(i)), os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		return errors.Wrapf(err, "failed to open temp file: %d/%d", i, d.procs-1)
+	}
+	defer file.Close()
+
+	// レスポンスの内容をファイルにコピーする
+	io.Copy(file, resp.Body)
+
+	return nil
 }
 
 func (d *Downloader) getContentLength() (int, error) {
