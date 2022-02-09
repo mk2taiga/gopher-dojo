@@ -155,6 +155,9 @@ func (d *Downloader) rangeRequest(ctx context.Context, from int, to int, i int) 
 	return nil
 }
 
+// Head メソッドを使って、取得したいコンテンツを調べる。調べる内容は以下の通り。
+// 	1. Accept-Ranges を採用しているかどうか。
+//	2. Content-Length はどれだけの長さか。
 func (d *Downloader) getContentLength() (int, error) {
 	res, err := http.Head(d.url)
 	if err != nil {
